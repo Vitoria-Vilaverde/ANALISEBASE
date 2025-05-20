@@ -1,0 +1,408 @@
+
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Dashboard Múltiplas Planilhas</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js">
+function removerSemCpfOuNome() {
+  const dados = window.ultimoDadosFiltrados.filter(d =>
+    d.cpf && d.cpf.trim().length === 11 && d.nome && d.nome.trim() !== ""
+  );
+  window.ultimoDadosFiltrados = dados;
+  renderizarTudo(dados);
+}
+
+</script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js">
+function removerSemCpfOuNome() {
+  const dados = window.ultimoDadosFiltrados.filter(d =>
+    d.cpf && d.cpf.trim().length === 11 && d.nome && d.nome.trim() !== ""
+  );
+  window.ultimoDadosFiltrados = dados;
+  renderizarTudo(dados);
+}
+
+</script>
+  <style>
+button:active {
+  box-shadow: inset 2px 2px 6px rgba(0,0,0,0.3);
+  background-color: #1b4f72;
+}
+
+    body { font-family: Arial, sans-serif; background: #f4f6f9; margin: 0; padding: 20px; }
+    .container { max-width: 1200px; margin: auto; background: #fff; padding: 20px; border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); }
+    h1 { text-align: center; color: #2e86de; }
+    .controls { margin-bottom: 20px; display: flex; gap: 10px; flex-wrap: wrap; }
+    button, input[type="file"] { padding: 10px; font-size: 14px; border-radius: 6px; border: 1px solid #ccc; }
+    button { background: #2e86de; color: white; cursor: pointer; }
+    table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 14px; }
+    th, td { border: 1px solid #ddd; padding: 8px; }
+    th { background: #f0f0f0; }
+    canvas { margin-top: 20px; }
+  </style>
+</head>
+<body>
+  <h1>Dashboard Múltiplas Planilhas</h1>
+  <div class="container">
+    <div class="controls">
+      <select id="filtroPrioridade"><option value="">Todas as Prioridades</option><option value="Alta">Alta</option><option value="Média">Média</option><option value="Baixa">Baixa</option></select>
+      <select id="filtroUF"><option value="">UF</option></select>
+      <select id="filtroTipo"><option value="">Tipo</option></select>
+      <select id="filtroMargem"><option value="">Margem</option>
+        <option value="0-500">Até 500</option><option value="501-1000">501 a 1000</option>
+        <option value="1001-2000">1001 a 2000</option><option value="2001+">Acima de 2000</option>
+      </select>
+      <button onclick="removerComErro()">Excluir com Erro</button>
+      <button onclick="removerInativos()">Excluir Inativos</button>
+      <button onclick="exportarFiltrado()">Exportar Filtrado</button>
+      <button onclick="removerSemCpfOuNome()">Excluir CPF ou Nome Ausente</button>
+      <input type="file" id="upload" multiple />
+      <button onclick="processar()">Processar</button>
+    </div>
+    <div id="resumo"></div>
+    <table id="tabela">
+      <thead><tr><th>CPF</th><th>Nome</th><th>Telefone</th><th>Margem</th><th>Score</th><th>Prioridade</th></tr></thead>
+      <tbody></tbody>
+    </table>
+
+    <div class="section">
+      <h3>Resumo por Prioridade</h3>
+      <table id="tabelaResumoPrioridade"><thead><tr><th>Prioridade</th><th>Qtde</th><th>Média Margem</th><th>Média Score</th></tr></thead><tbody></tbody></table>
+    </div>
+    <div class="section">
+      <h3>Distribuição por Tipo de Servidor</h3>
+      <table id="tabelaTipoServidor"><thead><tr><th>Tipo</th><th>Qtde</th><th>Média Margem</th></tr></thead><tbody></tbody></table>
+    </div>
+    <div class="section">
+      <h3>Distribuição por Secretaria</h3>
+      <table id="tabelaSecretaria"><thead><tr><th>Secretaria</th><th>Qtde</th><th>Média Margem</th></tr></thead><tbody></tbody></table>
+    </div>
+    <canvas id="motivo" height="100"></canvas>
+<canvas id="scatter" height="100"></canvas>
+
+    <canvas id="grafico" height="100"></canvas>
+  </div>
+
+<script>
+async function processar() {
+  const files = Array.from(document.getElementById('upload').files);
+  if (!files.length) return alert("Selecione ao menos um arquivo.");
+
+  const allData = [];
+
+  await Promise.all(files.map(file => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = e => {
+        const wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
+        const json = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+        allData.push(...json);
+        resolve();
+      };
+      reader.onerror = reject;
+      reader.readAsArrayBuffer(file);
+    });
+  }));
+
+  const dados = [];
+
+  allData.forEach(row => {
+    const cpf = (row.cpf || '').toString().padStart(11, '0');
+    const nome = row.nome || '';
+    const telefone = (row.telefone_celular || row.tel1 || '').toString().replace(/\D/g, '');
+    const tipo = (row["tipo servidor"] || row.tipo_servidor || row.adicional1 || '').toLowerCase();
+    const uf = (row.uf || '').toUpperCase();
+    const desconto = parseFloat((row["margem emprestimo descontos"] || row.detalhe_desconto || "0").toString().replace(",", ".")) || 0;
+    const margem = parseFloat((row["margem emprestimo disponivel"] || row.margem_disponivel || "0").toString().replace(",", ".")) || 0;
+    const score_modelo = parseFloat((row.score_modelo || "0").toString().replace(",", ".")) || 0;
+
+    let score = 0;
+    if (margem > 1500) score += 2;
+    if (score_modelo > 800) score += 3;
+    if (["efetivo", "aposentado"].includes(tipo)) score += 2;
+    if (["SP", "RJ", "MG"].includes(uf)) score += 1;
+    if (margem > 0) score += 1;
+    if (desconto > 0) score += 2;
+
+    let prioridade = "Baixa";
+    if (score >= 6) prioridade = "Alta";
+    else if (score >= 3) prioridade = "Média";
+
+    dados.push({ cpf, nome, telefone, margem, score, prioridade });
+  });
+
+  document.querySelector("#tabela tbody").innerHTML = dados.map(d =>
+    `<tr><td>${d.cpf}</td><td>${d.nome}</td><td>${d.telefone}</td><td>${d.margem.toFixed(2)}</td><td>${d.score}</td><td>${d.prioridade}</td></tr>`
+  ).join("");
+
+  const total = dados.length;
+  const alta = dados.filter(d => d.prioridade === "Alta").length;
+  const media = dados.filter(d => d.prioridade === "Média").length;
+  const baixa = dados.filter(d => d.prioridade === "Baixa").length;
+
+  document.getElementById("resumo").innerHTML =
+    `<strong>Total:</strong> ${total} | Alta: ${alta} | Média: ${media} | Baixa: ${baixa}`;
+
+  if (window.chart) window.chart.destroy();
+  window.chart = new Chart(document.getElementById("grafico"), {
+    type: 'bar',
+    data: {
+      labels: ["Alta", "Média", "Baixa"],
+      datasets: [{
+        label: "Distribuição",
+        data: [alta, media, baixa],
+        backgroundColor: ["#27ae60", "#f1c40f", "#e74c3c"]
+      }]
+    }
+  });
+}
+
+function removerSemCpfOuNome() {
+  const dados = window.ultimoDadosFiltrados.filter(d =>
+    d.cpf && d.cpf.trim().length === 11 && d.nome && d.nome.trim() !== ""
+  );
+  window.ultimoDadosFiltrados = dados;
+  renderizarTudo(dados);
+}
+
+</script>
+</body>
+</html>
+
+<script>
+let todosDados = [];
+
+async function processar() {
+  const files = Array.from(document.getElementById('upload').files);
+  if (!files.length) return alert("Selecione ao menos um arquivo.");
+
+  const allData = [];
+  await Promise.all(files.map(file => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = e => {
+        const wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
+        const json = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+        allData.push(...json);
+        resolve();
+      };
+      reader.onerror = reject;
+      reader.readAsArrayBuffer(file);
+    });
+  }));
+
+  todosDados = allData;
+  aplicarFiltros();
+}
+
+function aplicarFiltros() {
+  const filtroGrupo = document.getElementById("filtroPrioridade")?.value || "";
+  const filtroUF = document.getElementById("filtroUF")?.value || "";
+  const filtroTipo = document.getElementById("filtroTipo")?.value || "";
+  const filtroMargem = document.getElementById("filtroMargem")?.value || "";
+  const dados = [];
+
+  todosDados.forEach(row => {
+    const cpf = (row.cpf || '').toString().padStart(11, '0');
+    const nome = row.nome || '';
+    const telefone = (row.telefone_celular || row.tel1 || '').toString().replace(/\D/g, '');
+    const tipo = (row["tipo servidor"] || row.tipo_servidor || row.adicional1 || '').toLowerCase();
+    const secretaria = row.secretaria || '';
+    const situacao = (row.situacao || '').toLowerCase();
+    const uf = (row.uf || '').toUpperCase();
+    const desconto = parseFloat((row["margem emprestimo descontos"] || row.detalhe_desconto || "0").toString().replace(",", ".")) || 0;
+    const margem = parseFloat((row["margem emprestimo disponivel"] || row.margem_disponivel || "0").toString().replace(",", ".")) || 0;
+    const score_modelo = parseFloat((row.score_modelo || "0").toString().replace(",", ".")) || 0;
+    const erro = row.mensagem_erro || "";
+
+    let score = 0;
+    if (margem > 1500) score += 2;
+    if (score_modelo > 800) score += 3;
+    if (["efetivo", "aposentado"].includes(tipo)) score += 2;
+    if (["SP", "RJ", "MG"].includes(uf)) score += 1;
+    if (margem > 0) score += 1;
+    if (desconto > 0) score += 2;
+
+    let prioridade = "Baixa";
+    if (score >= 6) prioridade = "Alta";
+    else if (score >= 3) prioridade = "Média";
+
+    if (
+      (!filtroGrupo || filtroGrupo === prioridade) &&
+      (!filtroUF || uf === filtroUF) &&
+      (!filtroTipo || tipo === filtroTipo) &&
+      (!filtroMargem || (
+        (filtroMargem === "0-500" && margem <= 500) ||
+        (filtroMargem === "501-1000" && margem > 500 && margem <= 1000) ||
+        (filtroMargem === "1001-2000" && margem > 1000 && margem <= 2000) ||
+        (filtroMargem === "2001+" && margem > 2000)
+      ))
+    ) {
+      dados.push({ cpf, nome, telefone, tipo, secretaria, situacao, margem, score, prioridade, mensagem_erro: erro });
+    }
+  });
+
+  window.ultimoDadosFiltrados = dados;
+  renderizarTudo(dados);
+}
+
+function renderizarTudo(dados) {
+  const corpo = document.querySelector("#tabela tbody");
+  corpo.innerHTML = dados.slice(0, 10).map(d =>
+    `<tr><td>${d.cpf}</td><td>${d.nome}</td><td>${d.telefone}</td><td>${d.margem.toFixed(2)}</td><td>${d.score}</td><td>${d.prioridade}</td></tr>`
+  ).join("");
+
+  const total = dados.length;
+  const alta = dados.filter(d => d.prioridade === "Alta").length;
+  const media = dados.filter(d => d.prioridade === "Média").length;
+  const baixa = dados.filter(d => d.prioridade === "Baixa").length;
+
+  document.getElementById("resumo").innerHTML =
+    `<strong>Total:</strong> ${total} | Alta: ${alta} | Média: ${media} | Baixa: ${baixa}`;
+
+  if (window.barChart) window.barChart.destroy();
+  window.barChart = new Chart(document.getElementById("grafico"), {
+    type: 'bar',
+    data: {
+      labels: ["Alta", "Média", "Baixa"],
+      datasets: [{
+        label: "Distribuição",
+        data: [alta, media, baixa],
+        backgroundColor: ["#27ae60", "#f1c40f", "#e74c3c"]
+      }]
+    }
+  });
+
+  if (window.scatterChart) window.scatterChart.destroy();
+  const cores = { "Alta": "#27ae60", "Média": "#f1c40f", "Baixa": "#e74c3c" };
+  const scatterData = {
+    datasets: ["Alta", "Média", "Baixa"].map(p => ({
+      label: p,
+      data: dados.filter(d => d.prioridade === p).map(d => ({ x: d.score, y: d.margem })),
+      backgroundColor: cores[p]
+    }))
+  };
+  window.scatterChart = new Chart(document.getElementById("scatter"), {
+    type: 'scatter',
+    data: scatterData,
+    options: {
+      plugins: { title: { display: true, text: 'Dispersão: Score vs Margem' } },
+      scales: {
+        x: { title: { display: true, text: 'Score' }, beginAtZero: true },
+        y: { title: { display: true, text: 'Margem' }, beginAtZero: true }
+      }
+    }
+  });
+
+  preencherResumoTabelas(dados);
+
+  if (window.motivoChart) window.motivoChart.destroy();
+  const contagemMotivo = {};
+  dados.forEach(d => {
+    const motivos = [];
+    if (d.margem > 1500) motivos.push("Margem Alta");
+    if (d.score_modelo > 800) motivos.push("Score ML Alto");
+    if (["efetivo", "aposentado"].includes(d.tipo)) motivos.push("Servidor Efetivo");
+    if (["SP", "RJ", "MG"].includes(d.uf)) motivos.push("UF Favorável");
+    if (d.margem > 0) motivos.push("Margem > 0");
+    if (d.desconto > 0) motivos.push("Desconto Presente");
+
+    const principal = motivos[0] || "Sem Justificativa";
+    contagemMotivo[principal] = (contagemMotivo[principal] || 0) + 1;
+  });
+
+  window.motivoChart = new Chart(document.getElementById("motivo"), {
+    type: 'bar',
+    data: {
+      labels: Object.keys(contagemMotivo),
+      datasets: [{
+        label: "Motivos principais do Score",
+        data: Object.values(contagemMotivo),
+        backgroundColor: "#2e86de"
+      }]
+    },
+    options: {
+      plugins: { title: { display: true, text: 'Principais Motivos de Score' } }
+    }
+  });
+
+}
+
+function removerComErro() {
+  const dados = window.ultimoDadosFiltrados.filter(d => !d.mensagem_erro || d.mensagem_erro === "");
+  window.ultimoDadosFiltrados = dados;
+  renderizarTudo(dados);
+}
+
+function removerInativos() {
+  const dados = window.ultimoDadosFiltrados.filter(d => {
+    const s = (d.situacao || "").toLowerCase();
+    return !s.includes("inativa") && !s.includes("licença") && !s.includes("suspenso");;
+  });
+  window.ultimoDadosFiltrados = dados;
+  renderizarTudo(dados);
+}
+
+function exportarFiltrado() {
+  const dados = window.ultimoDadosFiltrados;
+  if (!dados.length) return alert("Nada para exportar.");
+  const ws = XLSX.utils.json_to_sheet(dados);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "LeadsFiltrados");
+  XLSX.writeFile(wb, "leads_filtrados.xlsx");
+}
+
+function preencherResumoTabelas(dados) {
+  const by = (key) => [...new Set(dados.map(d => d[key] || "Não informado"))];
+
+  const porPrioridade = by("prioridade").map(p => {
+    const grupo = dados.filter(d => d.prioridade === p);
+    const mediaMargem = grupo.reduce((s, x) => s + x.margem, 0) / grupo.length || 0;
+    const mediaScore = grupo.reduce((s, x) => s + x.score, 0) / grupo.length || 0;
+    return `<tr><td>${p}</td><td>${grupo.length}</td><td>${mediaMargem.toFixed(2)}</td><td>${mediaScore.toFixed(2)}</td></tr>`;
+  }).join('');
+  document.querySelector("#tabelaResumoPrioridade tbody").innerHTML = porPrioridade;
+
+  const porTipo = by("tipo").map(t => {
+    const grupo = dados.filter(d => d.tipo === t);
+    const media = grupo.reduce((s, x) => s + x.margem, 0) / grupo.length || 0;
+    return `<tr><td>${t}</td><td>${grupo.length}</td><td>${media.toFixed(2)}</td></tr>`;
+  }).join('');
+  document.querySelector("#tabelaTipoServidor tbody").innerHTML = porTipo;
+
+  const porSecretaria = by("secretaria").map(s => {
+    const grupo = dados.filter(d => d.secretaria === s);
+    const media = grupo.reduce((soma, x) => soma + x.margem, 0) / grupo.length || 0;
+    return `<tr><td>${s}</td><td>${grupo.length}</td><td>${media.toFixed(2)}</td></tr>`;
+  }).join('');
+  document.querySelector("#tabelaSecretaria tbody").innerHTML = porSecretaria;
+
+  popularFiltros(dados);
+}
+
+function popularFiltros(dados) {
+  const ufs = new Set(), tipos = new Set();
+  dados.forEach(d => {
+    if (d.uf) ufs.add(d.uf);
+    if (d.tipo) tipos.add(d.tipo);
+  });
+
+  const selUF = document.getElementById("filtroUF");
+  const selTipo = document.getElementById("filtroTipo");
+  selUF.innerHTML = "<option value=''>UF</option>";
+  selTipo.innerHTML = "<option value=''>Tipo</option>";
+
+  ufs.forEach(u => selUF.innerHTML += `<option value="${u}">${u}</option>`);
+  tipos.forEach(t => selTipo.innerHTML += `<option value="${t}">${t}</option>`);
+}
+
+function removerSemCpfOuNome() {
+  const dados = window.ultimoDadosFiltrados.filter(d =>
+    d.cpf && d.cpf.trim().length === 11 && d.nome && d.nome.trim() !== ""
+  );
+  window.ultimoDadosFiltrados = dados;
+  renderizarTudo(dados);
+}
+
+</script>
